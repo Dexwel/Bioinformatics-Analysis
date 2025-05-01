@@ -1,0 +1,325 @@
+---
+title: "Introductionto R for Bioinformatics"
+author: "Daniel Adediran"
+format: html
+editor: visual
+---
+
+# Phylogenetic Analysis Tutorials: Viral Spike Proteins and Hemoglobin Genes
+
+## Tutorial 1: Viral Spike Proteins
+
+### Case Study Introduction
+
+Viruses like coronaviruses use spike glycoproteins to enter host cells. For example, SARS-CoV-2’s spike protein binds the ACE2 receptor to initiate infection ([Structural and Phylogenetic Analysis of SARS-CoV-2 Spike Glycoprotein from the Most Widespread Variants - PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC9410480/#:~:text=Several%20studies%20have%20been%20conducted,7)). Because the spike protein is critical for host recognition and is highly variable among virus strains, it is a useful marker for studying viral evolution. In this tutorial, we will retrieve spike protein sequences from several corona viruses, align them, and build a phylogeny tree to infer their relationships.
+
+### **Background:**
+
+Spike proteins protrude from the viral envelope and determine host range. They evolve under immune and receptor-binding pressures.
+
+### **Goal:**
+
+Compare spike protein sequences (e.g. SARS-CoV-2, SARS-CoV-1, MERS-CoV) using R.
+
+**Setting up R environment and packages:** Ensure R (version ≥3.6) is installed. In RStudio or a terminal, run:
+
+```{r}
+install.packages(c("ape","rentrez","seqinr")) 
+BiocManager::install(c("Biostrings","msa","ggtreye")) 
+```
+
+This installs *ape* (phylogenetics), *rentrez* (NCBI query), *seqinr* (sequence analysis), and Bioconductor packages *Biostrings*, *msa* (alignment), *ggtree* (tree plotting).
+
+Load them with:
+
+```{r}
+library(ape)        # Phylogenetic functions 
+library(rentrez)    # NCBI data retrieval ([Rentrez Tutorial](https://cran.r-project.org/web/packages/rentrez/vignettes/rentrez_tutorial.html#:~:text=The%20NCBI%20makes%20this%20data,an%20R%20session%20or%20script))
+library(Biostrings) # Sequence handling 
+library(msa)        # Multiple sequence alignment
+library(seqinr)     # Sequence manipulation (for distances) 
+library(ggtree)     # Tree visualization
+```
+
+*Rentrez* provides access to NCBI’s Entrez API ([Rentrez Tutorial](https://cran.r-project.org/web/packages/rentrez/vignettes/rentrez_tutorial.html#:~:text=The%20NCBI%20makes%20this%20data,an%20R%20session%20or%20script)).
+
+### 1. Retrieving Spike Protein Sequences
+
+We use `rentrez` to fetch spike protein FASTA sequences. For example, search by virus name and protein:
+
+```{r}
+search_term <- "SARS-CoV-2 AND spike Protein" 
+spike_search <- entrez_search(db="protein", term=search_term, retmax=15) 
+spike_ids <- spike_search$ids 
+print(spike_ids)
+```
+
+Example output might be (IDs vary):
+
+```         
+## [1] "4433431" "4433432" "4433433" 
+```
+
+These are protein record IDs. Next, fetch the sequences and save to a FASTA file:
+
+```{r}
+spike_fasta <- entrez_fetch(db="protein", id=spike_ids, rettype="fasta") 
+write(spike_fasta, file="spikes.fasta") 
+```
+
+Check the first sequence (FASTA header and start):
+
+```{r}
+cat(substr(spike_fasta, 1, 80), "...\n") 
+```
+
+Expected snippet:
+
+```         
+>YP_009724390.1 spike glycoprotein [Severe acute respiratory syndrome coronavirus 2] MADSNGTITVP...  
+```
+
+This shows the FASTA header (`>`) and first amino acids of the SARS-CoV-2 spike protein. Repeat for other viruses (e.g. SARS-CoV-1, MERS-CoV) by adjusting `search_term`. Each retrieved sequence is stored in *spikes.fasta*.
+
+-   **Question:** Why do we use the “protein” database in `entrez_search` for spike proteins? What would change if we searched the “nucleotide” database instead?
+
+### 2. Multiple Sequence Alignment
+
+We now align the protein sequences using Clustal Omega (via `msa`):
+
+```{r}
+spike_seqs <- readAAStringSet("spikes.fasta") 
+msa_alignment <- msa(spike_seqs, method="ClustalOmega")
+msa_alignment 
+```
+
+This prints a summary, for example:
+
+```         
+## MsaAAMultipleAlignment with 3 sequences, width 1273 
+```
+
+indicating 3 sequences aligned over 1273 amino acids. To inspect, convert to a character matrix:
+
+```{r}
+aligned_chars <- as.matrix(msa_alignment)
+aligned_chars[1, 1:10]
+```
+
+You might see something like:
+
+```         
+## [1] "M" "A" "D" "S" "N" "G" "T" "I" "T" "V" 
+```
+
+(positions of SARS-CoV-2). You can also view the full alignment or consensus if desired.
+
+**Interpretation:**
+
+Conserved columns (identical residues) suggest important functional regions. Variable sites indicate evolutionary divergence.
+
+**Question:** In the alignment, which regions of the spike protein (e.g. receptor-binding domain vs others) look most conserved? Why might conservation occur there?
+
+### 3. Phylogenetic Analysis
+
+To build a tree, we convert the alignment for phylogenetic use. We use `msaConvert` to get a *seqinr* alignment, then compute a distance matrix (e.g. percentage of differences):
+
+```{r}
+seqinr_align <- msaConvert(msa_alignment, type="seqinr::alignment") 
+dist_matrix <- dist.alignment(seqinr_align, matrix = "identity")
+virus_tree <- njs(dist_matrix)
+print(virus_tree)
+```
+
+This might output:
+
+```         
+## Phylogenetic tree with 3 tips and 2 internal nodes. ## Tip labels: ## SARS-CoV-2, SARS-CoV, MERS-CoV 
+```
+
+This Neighbor-Joining tree groups the sequences by similarity. The numeric matrix `dist_matrix` underlies the tree.
+
+**Interpretation:** In our example, SARS-CoV-2 and SARS-CoV-1 cluster together, indicating a closer relationship than with MERS-CoV. This matches known taxonomy (SARS viruses are sarbecoviruses, MERS is a more distant merbecovirus).
+
+**Question:** Based on the tree, which two viruses are most closely related? Does this agree with their known classification or outbreak history?
+
+### 4. Visualizing the Phylogenetic Tree
+
+We use *ggtree* for a nicer plot:
+
+```{r}
+ggtree(virus_tree)+geom_tiplab(size=3)+theme_tree2() 
+```
+
+This produces a tree diagram (not shown here) where each tip is labeled by virus. You should see SARS-CoV-2 and SARS-CoV-1 on adjacent branches.
+
+**Expected result:** A figure of the phylogenetic tree with labeled tips. It should clearly show SARS-CoV-2 and SARS-CoV grouping together.
+
+**Interpretation:** The branch lengths reflect sequence divergence; shorter distance means closer relationship. Discuss any surprising relationships and what they imply about spike evolution.
+
+### Discussion Questions
+
+-   **Question:** What are the main steps we took to analyze these sequences (from NCBI retrieval to tree)? Why does each step matter?
+
+-   **Question:** If you included additional spikes (e.g. from bat coronaviruses), how might the tree change? What biological questions could that answer?
+
+## Tutorial 2: Hemoglobin Genes
+
+### Case Study Introduction
+
+Hemoglobin (Hb) is the oxygen-transport protein in red blood cells, composed of two alpha and two beta subunits. The globin gene family arose by gene duplication, so that different subunits (and variants) evolved in vertebrates ([Gene Duplication and Evolutionary Innovations in Hemoglobin-Oxygen Transport - PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC5005275/#:~:text=The%20diversification%20of%20the%20vertebrate,genes%20that%20encode%20the%20different)). For example, α-globin and β-globin genes diverged millions of years ago, and various species have their own versions. By comparing the nucleotide sequences of the hemoglobin **beta** subunit (HBB) gene across species, we can reconstruct evolutionary relationships among those species’ genes. Phylogenetic trees of HBB genes can reveal both speciation and gene-duplication histories.
+
+### **Background:**
+
+Hemoglobin’s β-chain is encoded by the HBB gene. Sequence differences accumulate over time, so alignment of HBB across species reflects their divergence.
+
+**Goal:**
+
+Download HBB gene sequences from human, chimpanzee, mouse, cow, and pig; align them; and infer a phylogeny.
+
+### Setting up R environment
+
+As before, we need the same packages (plus any new ones if needed). For DNA data, we use *Biostrings* and *msa* for DNA sequences too:
+
+```{r}
+install.packages(c("ape","rentrez")) 
+BiocManager::install(c("Biostrings","msa","ggtree")) 
+```
+
+Load libraries:
+
+```{r}
+library(ape) 
+library(rentrez) 
+library(Biostrings) 
+library(msa) 
+library(ggtree) 
+```
+
+### 1. Retrieving Hemoglobin Sequences
+
+We search NCBI for the HBB gene (nucleotide). For example, human HBB is NM_000518.4. Using rentrez:
+
+```{r}
+ids <- c()
+species <- c("Homo sapiens","Pan troglodytes","Mus musculus",
+             "Bos taurus","Sus scrofa")
+for(sp in species) {
+  query <- paste0(sp, " hemoglobin subunit beta gene")
+  res <- entrez_search(db="nucleotide", term=query, retmax=1)
+  ids <- c(ids, res$ids)
+}
+ids
+```
+
+This yields one ID per species. We fetch all sequences in FASTA format:
+
+```{r}
+hbb_fasta <- entrez_fetch(db="nucleotide", id=ids, rettype="fasta")
+write(hbb_fasta, file="hbb_genes.fasta")
+cat(substr(hbb_fasta, 1, 100), "...\n")
+```
+
+Example snippet (first 100 nt of human HBB):
+
+```         
+>NM_000518.4 Homo sapiens hemoglobin subunit beta (HBB) mRNA, complete CDS ATGGTGCACCTGACTCCTGAGGAGAAGTCTGCCGTT... 
+```
+
+Each sequence header indicates species and gene. Now read them into R:
+
+```{r}
+hbb_seqs <- readDNAStringSet("hbb_genes.fasta", format="fasta")
+names(hbb_seqs) <- species  # label sequences by species
+```
+
+**Question:** Why do we label each sequence with its species before alignment? How would the analysis be affected if the names were generic?
+
+### 2. Multiple Sequence Alignment
+
+We align the DNA sequences of HBB using Clustal Omega:
+
+```{r}
+hbb_alignment <- msa(hbb_seqs, method="ClustalOmega")
+hbb_alignment
+```
+
+Output might say:
+
+```         
+## MsaDNAMultipleAlignment with 5 sequences, width 447 
+```
+
+(showing 5 sequences, 447 bases each). To view part of the alignment:
+
+```{r}
+aligned_matrix <- as.matrix(hbb_alignment)
+aligned_matrix[1:2, 1:20]  # first 20 bases of first two sequences 
+```
+
+You should see the start codon “ATG” for each and how they match:
+
+```         
+##       1  2  3  ... 20 ## Homo  A  T  G ... GAG ## Pan   A  T  G ... GAG 
+```
+
+**Interpretation:**
+
+Most sequences start with “ATG” (start codon), showing conserved start. Some bases may differ, reflecting mutations. The alignment ensures we compare homologous positions across species.
+
+**Question:** Do you notice any insertions/deletions (gaps) in the alignment? What might cause a gap in one sequence relative to others?
+
+### 4. Phylogenetic Analysis
+
+Convert the DNA alignment to an *ape* “DNAbin” object and compute distances:
+
+```{r}
+hbb_bin <- as.DNAbin(hbb_alignment)
+dist_mat <- dist.dna(hbb_bin, model="raw")  # raw proportion of differences
+hbb_tree <- nj(dist_mat)
+print(hbb_tree)
+```
+
+Example output:
+
+```         
+## Phylogenetic tree with 5 tips and 3 internal nodes. ## Tip labels: ## Homo sapiens, Pan troglodytes, Mus musculus, Bos taurus, Sus scrofa 
+```
+
+This tree reflects HBB gene relationships.
+
+**Interpretation:**
+
+Human and chimp (primates) are expected to cluster closely, reflecting their recent common ancestor. Cow and pig (both ungulates) may be closer together, while mouse (a rodent) branches off separately. This should mirror known mammal evolution.
+
+**Question:** Which two species share the most similar HBB sequences according to the tree? Is this consistent with what you know about mammalian phylogeny?
+
+### Visualizing the Phylogenetic Tree
+
+Plot with *ggtree*:
+
+```{r}
+ggtree(hbb_tree) + geom_tiplab(size=3) + theme_tree2() 
+```
+
+This will display the tree. You should see the labels of each species and how they branch.
+
+**Expected result:** A tree graphic where (Homo, Pan) group together, (Bos, Sus) cluster, and *Mus* is separate.
+
+**Interpretation:**
+
+The phylogeny of HBB genes recapitulates the species tree, confirming that these sequences are orthologous across species. Any deviation could suggest different evolutionary pressures or data issues.
+
+### Discussion Questions
+
+-   **Question:** How do gene duplications differ from speciation in a phylogenetic tree? (Hint: paralogs vs orthologs – if we had aligned alpha and beta globins together, what pattern would you expect?) ([Gene Duplication and Evolutionary Innovations in Hemoglobin-Oxygen Transport - PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC5005275/#:~:text=Phylogenetic%20Insights%20Into%20Gene%20Family,Evolution))
+
+-   **Question:** What steps would you take to extend this analysis to many species or multiple globin genes? What additional challenges might arise (e.g., sequence divergence, paralogy)?
+
+### References
+
+-   Rentrez documentation: rentrez provides R functions for the NCBI Entrez API ([Rentrez Tutorial](https://cran.r-project.org/web/packages/rentrez/vignettes/rentrez_tutorial.html#:~:text=The%20NCBI%20makes%20this%20data,an%20R%20session%20or%20script)).
+
+-   Viral spike protein function: Spike glycoprotein is essential for cell entry and vaccine targets ([Structural and Phylogenetic Analysis of SARS-CoV-2 Spike Glycoprotein from the Most Widespread Variants - PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC9410480/#:~:text=Several%20studies%20have%20been%20conducted,7))
+
+-   Hemoglobin gene evolution: The globin gene family expanded via duplication, producing α- and β-globins ([Gene Duplication and Evolutionary Innovations in Hemoglobin-Oxygen Transport - PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC5005275/#:~:text=The%20diversification%20of%20the%20vertebrate,genes%20that%20encode%20the%20different)). Phylogenetic trees help distinguish orthologous vs paralogous relationships in gene families ([Gene Duplication and Evolutionary Innovations in Hemoglobin-Oxygen Transport - PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC5005275/#:~:text=Phylogenetic%20Insights%20Into%20Gene%20Family,Evolution)).
